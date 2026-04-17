@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "surge-sdk"
+version = "0.1.0"
+description = "Lightweight cost-attribution wrapper for Anthropic and OpenAI SDKs"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "MIT"}
+dependencies = []
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.25.0"]
+openai = ["openai>=1.0.0"]
+all = ["anthropic>=0.25.0", "openai>=1.0.0"]
+
+[tool.setuptools.packages.find]
+include = ["surge_sdk*"]
