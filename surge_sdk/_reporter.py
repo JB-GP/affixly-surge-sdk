@@ -31,6 +31,13 @@ _PRICING = {
         "o1":               (15.00, 60.00),
         "o1-mini":          (3.00, 12.00),
     },
+    "gemini": {
+        "gemini-2.5-pro":   (1.25, 10.00),
+        "gemini-2.5-flash": (0.15, 0.60),
+        "gemini-2.0-flash": (0.10, 0.40),
+        "gemini-1.5-pro":   (1.25, 5.00),
+        "gemini-1.5-flash": (0.075, 0.30),
+    },
 }
 _DEFAULT_PRICING = (3.0, 15.0)
 
