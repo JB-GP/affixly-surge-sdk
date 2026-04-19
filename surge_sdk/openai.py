@@ -4,19 +4,28 @@ surge_sdk.openai — Drop-in wrapper for the OpenAI Python SDK.
 Replaces `import openai` with `from surge_sdk import openai`.
 The wrapper intercepts chat.completions.create(), reads token counts
 from response.usage, and reports to Surge in the background.
-
-Everything else passes through unchanged.
 """
 
+import logging
 from surge_sdk._reporter import report_usage
 
-# Re-export everything from the real SDK
-from openai import *  # noqa: F401,F403
+# H6 fix: explicit imports instead of wildcard
 from openai import OpenAI as _RealOpenAI, AsyncOpenAI as _RealAsyncOpenAI
+from openai import (
+    APIError, AuthenticationError, BadRequestError, NotFoundError,
+    RateLimitError, APIConnectionError, APITimeoutError,
+)
+
+logger = logging.getLogger("surge_sdk")
+
+__all__ = [
+    "OpenAI", "AsyncOpenAI",
+    "APIError", "AuthenticationError", "BadRequestError", "NotFoundError",
+    "RateLimitError", "APIConnectionError", "APITimeoutError",
+]
 
 
 def _extract_and_report(response, tags=None):
-    """Extract token counts from an OpenAI response and report to Surge."""
     try:
         model = getattr(response, 'model', 'unknown') or 'unknown'
         usage = getattr(response, 'usage', None)
@@ -24,13 +33,11 @@ def _extract_and_report(response, tags=None):
             inp = getattr(usage, 'prompt_tokens', 0) or 0
             out = getattr(usage, 'completion_tokens', 0) or 0
             report_usage("openai", model, inp, out, tags)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("Failed to extract usage from OpenAI response: %s", e)
 
 
 class _SurgeCompletions:
-    """Wraps client.chat.completions to inject Surge reporting on create()."""
-
     def __init__(self, real_completions):
         self._real = real_completions
 
@@ -59,8 +66,6 @@ class _AsyncSurgeCompletions:
 
 
 class _SurgeChat:
-    """Wraps client.chat to expose the completions wrapper."""
-
     def __init__(self, real_chat):
         self._real = real_chat
 
@@ -85,8 +90,6 @@ class _AsyncSurgeChat:
 
 
 class OpenAI(_RealOpenAI):
-    """Drop-in replacement for openai.OpenAI with Surge reporting."""
-
     @property
     def chat(self):
         if not hasattr(self, '_surge_chat'):
@@ -95,8 +98,6 @@ class OpenAI(_RealOpenAI):
 
 
 class AsyncOpenAI(_RealAsyncOpenAI):
-    """Drop-in replacement for openai.AsyncOpenAI with Surge reporting."""
-
     @property
     def chat(self):
         if not hasattr(self, '_surge_async_chat'):

@@ -1,20 +1,49 @@
 """
 _reporter.py — Direct event reporting from the SDK to the Surge backend.
 
-After every provider API call, the SDK extracts usage metadata from the
-response (model, tokens) and POSTs it to Surge's /api/events endpoint.
-
-Uses a shared thread pool (max 4 workers) instead of spawning one thread
-per call. Events that arrive faster than the pool drains are queued.
-Failures are silently swallowed — the SDK must never break the host app.
+Uses a shared ThreadPoolExecutor (max 4 workers) with an atexit handler
+for graceful shutdown. Redirects are disabled on HTTP requests to prevent
+Bearer token leakage. Failures are logged (not swallowed silently).
 """
 
+import atexit
+import logging
+import ssl
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from surge_sdk._config import get_config
 
+logger = logging.getLogger("surge_sdk")
+
 _MAX_TAG_LENGTH = 256
-_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="surge-sdk")
+_MAX_WORKERS = 4
+_REQUEST_TIMEOUT = 5
+_pool = ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="surge-sdk")
+
+
+# C5 fix: graceful shutdown on interpreter exit
+def _shutdown_pool():
+    try:
+        _pool.shutdown(wait=True, cancel_futures=False)
+    except Exception:
+        pass
+
+atexit.register(_shutdown_pool)
+
+
+# C4 fix: disable HTTP redirects to prevent Bearer token leakage
+import urllib.request
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            req.full_url, code,
+            f"Redirect to {newurl} blocked — Surge SDK does not follow redirects",
+            headers, fp
+        )
+
+_opener = urllib.request.build_opener(_NoRedirectHandler)
+
 
 # Pricing tables for client-side cost estimation (per million tokens)
 _PRICING = {
@@ -70,7 +99,10 @@ def _truncate(value, max_len=_MAX_TAG_LENGTH):
     if value is None:
         return None
     s = str(value)
-    return s[:max_len] if len(s) > max_len else s
+    if len(s) > max_len:
+        logger.warning("Tag value truncated from %d to %d chars", len(s), max_len)
+        return s[:max_len]
+    return s
 
 
 def estimate_cost(provider, model, input_tokens, output_tokens):
@@ -93,20 +125,25 @@ def report_usage(
     """Submit a usage event to Surge's /api/events endpoint.
 
     Runs on a shared thread pool (4 workers) so the caller's code path
-    is never blocked. Failures are silently swallowed.
+    is never blocked. Failures are logged, not swallowed silently.
     """
     cfg = get_config()
     if not cfg.surge_api_url:
         return
 
+    import math
     cost = estimate_cost(provider, model, input_tokens, output_tokens)
-    merged_tags = {**cfg.default_tags, **(tags or {})}
+    if not math.isfinite(cost):
+        logger.warning("Cost estimate is not finite (model=%s), skipping report", model)
+        return
+
+    merged_tags = {**cfg.default_tags_dict, **(tags or {})}
 
     payload = {
         "provider": _truncate(provider),
         "model": _truncate(model),
-        "input_tokens": int(input_tokens),
-        "output_tokens": int(output_tokens),
+        "input_tokens": int(input_tokens or 0),
+        "output_tokens": int(output_tokens or 0),
         "cost_usd": round(cost, 6),
         "requests": 1,
         "product_line": _truncate(cfg.product_line),
@@ -116,20 +153,25 @@ def report_usage(
 
     def _send():
         try:
-            import urllib.request
             import json
             headers = {"Content-Type": "application/json"}
             if cfg.surge_api_key:
                 headers["Authorization"] = f"Bearer {cfg.surge_api_key}"
+
+            # Explicit SSL context for certificate verification
+            ssl_ctx = ssl.create_default_context()
+
             req = urllib.request.Request(
                 f"{cfg.surge_api_url.rstrip('/')}/api/events",
                 data=json.dumps(payload).encode(),
                 headers=headers,
                 method="POST",
             )
-            urllib.request.urlopen(req, timeout=5)
-        except Exception:
-            pass  # Never crash the host app
+            # C4: use _opener (no redirects) instead of urlopen
+            _opener.open(req, timeout=_REQUEST_TIMEOUT, context=ssl_ctx)
+        except Exception as e:
+            # H8 fix: log instead of silently swallowing
+            logger.debug("Surge event report failed: %s", e)
 
     try:
         _pool.submit(_send)

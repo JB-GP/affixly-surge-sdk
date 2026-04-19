@@ -12,10 +12,10 @@ license = {text = "MIT"}
 dependencies = []
 
 [project.optional-dependencies]
-anthropic = ["anthropic>=0.25.0"]
-openai = ["openai>=1.0.0"]
-gemini = ["google-genai>=1.0.0"]
-all = ["anthropic>=0.25.0", "openai>=1.0.0", "google-genai>=1.0.0"]
+anthropic = ["anthropic>=0.25.0,<2.0.0"]
+openai = ["openai>=1.0.0,<3.0.0"]
+gemini = ["google-genai>=1.0.0,<2.0.0"]
+all = ["anthropic>=0.25.0,<2.0.0", "openai>=1.0.0,<3.0.0", "google-genai>=1.0.0,<2.0.0"]
 
 [tool.setuptools.packages.find]
 include = ["surge_sdk*"]
