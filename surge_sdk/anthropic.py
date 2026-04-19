@@ -9,7 +9,6 @@ The wrapper does two things:
 Everything else passes through unchanged. The wrapper is transparent.
 """
 
-import anthropic as _real_anthropic
 from surge_sdk._config import get_config
 from surge_sdk._reporter import report_usage
 
@@ -30,7 +29,7 @@ def _build_surge_user_id(per_request_tags=None):
     return None
 
 
-def _extract_and_report(response, tags: dict | None):
+def _extract_and_report(response, tags=None):
     """Extract token counts from an Anthropic response and report to Surge."""
     try:
         model = getattr(response, 'model', 'unknown')
@@ -108,10 +107,14 @@ class _AsyncSurgeMessages:
 class Anthropic(_RealAnthropic):
     @property
     def messages(self):
-        return _SurgeMessages(super().messages)
+        if not hasattr(self, '_surge_messages'):
+            self._surge_messages = _SurgeMessages(super().messages)
+        return self._surge_messages
 
 
 class AsyncAnthropic(_RealAsyncAnthropic):
     @property
     def messages(self):
-        return _AsyncSurgeMessages(super().messages)
+        if not hasattr(self, '_surge_async_messages'):
+            self._surge_async_messages = _AsyncSurgeMessages(super().messages)
+        return self._surge_async_messages

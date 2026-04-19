@@ -8,8 +8,6 @@ from response.usage, and reports to Surge in the background.
 Everything else passes through unchanged.
 """
 
-import openai as _real_openai
-from surge_sdk._config import get_config
 from surge_sdk._reporter import report_usage
 
 # Re-export everything from the real SDK
@@ -91,7 +89,9 @@ class OpenAI(_RealOpenAI):
 
     @property
     def chat(self):
-        return _SurgeChat(super().chat)
+        if not hasattr(self, '_surge_chat'):
+            self._surge_chat = _SurgeChat(super().chat)
+        return self._surge_chat
 
 
 class AsyncOpenAI(_RealAsyncOpenAI):
@@ -99,4 +99,6 @@ class AsyncOpenAI(_RealAsyncOpenAI):
 
     @property
     def chat(self):
-        return _AsyncSurgeChat(super().chat)
+        if not hasattr(self, '_surge_async_chat'):
+            self._surge_async_chat = _AsyncSurgeChat(super().chat)
+        return self._surge_async_chat

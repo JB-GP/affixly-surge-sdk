@@ -14,7 +14,6 @@ Everything else passes through unchanged.
 """
 
 from google import genai as _real_genai
-from surge_sdk._config import get_config
 from surge_sdk._reporter import report_usage
 
 # Re-export everything from the real SDK
@@ -60,32 +59,14 @@ class _SurgeModels:
         return getattr(self._real, name)
 
 
-class _AsyncSurgeModels:
-    """Async variant of _SurgeModels."""
-
-    def __init__(self, real_models):
-        self._real = real_models
-
-    async def generate_content(self, **kwargs):
-        surge_tags = kwargs.pop("surge_tags", None)
-        response = await self._real.generate_content(**kwargs)
-        _extract_and_report(response, surge_tags)
-        return response
-
-    async def generate_content_stream(self, **kwargs):
-        surge_tags = kwargs.pop("surge_tags", None)
-        return await self._real.generate_content_stream(**kwargs)
-
-    def __getattr__(self, name):
-        return getattr(self._real, name)
-
-
 class Client(_RealClient):
     """Drop-in replacement for google.genai.Client with Surge reporting."""
 
     @property
     def models(self):
-        return _SurgeModels(super().models)
+        if not hasattr(self, '_surge_models'):
+            self._surge_models = _SurgeModels(super().models)
+        return self._surge_models
 
 
 # Also expose the module-level helpers for the older pattern

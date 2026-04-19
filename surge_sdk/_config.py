@@ -27,8 +27,8 @@ def configure(
     Args:
         product_line: Top-level cost attribution bucket (e.g. "flow", "support-bot").
         default_tags: Dict of key-value pairs merged into every request's metadata.
-        surge_api_url: Optional Surge backend URL for direct event reporting.
-        surge_api_key: Optional Bearer token for Surge API.
+        surge_api_url: Surge backend URL for direct event reporting. Must be HTTPS in production.
+        surge_api_key: SDK API key (Bearer token) for authenticating with Surge.
     """
     global _config
     if product_line is not None:
@@ -37,6 +37,9 @@ def configure(
         _config.default_tags = default_tags
     if surge_api_url is not None:
         _config.surge_api_url = surge_api_url
+        # Validate HTTPS — import here to avoid circular import at module level
+        from surge_sdk._reporter import _validate_url
+        _validate_url(surge_api_url)
     if surge_api_key is not None:
         _config.surge_api_key = surge_api_key
 

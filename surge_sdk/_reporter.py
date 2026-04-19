@@ -3,12 +3,18 @@ _reporter.py — Direct event reporting from the SDK to the Surge backend.
 
 After every provider API call, the SDK extracts usage metadata from the
 response (model, tokens) and POSTs it to Surge's /api/events endpoint.
-Reporting is fire-and-forget on a background thread so it never blocks
-the caller's hot path.
+
+Uses a shared thread pool (max 4 workers) instead of spawning one thread
+per call. Events that arrive faster than the pool drains are queued.
+Failures are silently swallowed — the SDK must never break the host app.
 """
 
-import threading
+import warnings
+from concurrent.futures import ThreadPoolExecutor
 from surge_sdk._config import get_config
+
+_MAX_TAG_LENGTH = 256
+_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="surge-sdk")
 
 # Pricing tables for client-side cost estimation (per million tokens)
 _PRICING = {
@@ -42,7 +48,32 @@ _PRICING = {
 _DEFAULT_PRICING = (3.0, 15.0)
 
 
-def estimate_cost(provider: str, model: str, input_tokens: int, output_tokens: int) -> float:
+def _validate_url(url):
+    """Warn if surge_api_url is not HTTPS (except localhost for dev)."""
+    if not url:
+        return
+    lower = url.lower()
+    if lower.startswith("https://"):
+        return
+    if lower.startswith("http://localhost") or lower.startswith("http://127.0.0.1"):
+        return
+    warnings.warn(
+        f"surge_api_url is not HTTPS: {url!r}. "
+        "Your SDK API key will be transmitted in plaintext. "
+        "Use https:// in production.",
+        stacklevel=3,
+    )
+
+
+def _truncate(value, max_len=_MAX_TAG_LENGTH):
+    """Truncate a tag value to prevent oversized payloads."""
+    if value is None:
+        return None
+    s = str(value)
+    return s[:max_len] if len(s) > max_len else s
+
+
+def estimate_cost(provider, model, input_tokens, output_tokens):
     provider_pricing = _PRICING.get(provider, {})
     rates = _DEFAULT_PRICING
     for key, r in provider_pricing.items():
@@ -53,16 +84,16 @@ def estimate_cost(provider: str, model: str, input_tokens: int, output_tokens: i
 
 
 def report_usage(
-    provider: str,
-    model: str,
-    input_tokens: int,
-    output_tokens: int,
+    provider,
+    model,
+    input_tokens,
+    output_tokens,
     tags=None,
 ):
-    """Fire-and-forget: POST usage event to Surge's /api/events endpoint.
+    """Submit a usage event to Surge's /api/events endpoint.
 
-    Runs on a daemon thread so the caller's code path is never blocked.
-    Failures are silently swallowed — the SDK must never break the host app.
+    Runs on a shared thread pool (4 workers) so the caller's code path
+    is never blocked. Failures are silently swallowed.
     """
     cfg = get_config()
     if not cfg.surge_api_url:
@@ -72,15 +103,15 @@ def report_usage(
     merged_tags = {**cfg.default_tags, **(tags or {})}
 
     payload = {
-        "provider": provider,
-        "model": model,
-        "input_tokens": input_tokens,
-        "output_tokens": output_tokens,
+        "provider": _truncate(provider),
+        "model": _truncate(model),
+        "input_tokens": int(input_tokens),
+        "output_tokens": int(output_tokens),
         "cost_usd": round(cost, 6),
         "requests": 1,
-        "product_line": cfg.product_line,
-        "feature": merged_tags.get("feature"),
-        "customer_id": merged_tags.get("customer_id"),
+        "product_line": _truncate(cfg.product_line),
+        "feature": _truncate(merged_tags.get("feature")),
+        "customer_id": _truncate(merged_tags.get("customer_id")),
     }
 
     def _send():
@@ -100,5 +131,8 @@ def report_usage(
         except Exception:
             pass  # Never crash the host app
 
-    t = threading.Thread(target=_send, daemon=True)
-    t.start()
+    try:
+        _pool.submit(_send)
+    except RuntimeError:
+        # Pool has been shut down (interpreter exiting) — drop silently
+        pass
