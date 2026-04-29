@@ -42,7 +42,14 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
             headers, fp
         )
 
-_opener = urllib.request.build_opener(_NoRedirectHandler)
+# OpenerDirector.open() does not accept a `context` kwarg — the SSL context
+# must be attached to an HTTPSHandler at build time. build_opener uses a
+# default-context HTTPSHandler if we don't supply one, which already verifies
+# certs; this is mostly for clarity.
+_opener = urllib.request.build_opener(
+    urllib.request.HTTPSHandler(context=ssl.create_default_context()),
+    _NoRedirectHandler,
+)
 
 
 # Pricing tables for client-side cost estimation (per million tokens)
@@ -158,17 +165,15 @@ def report_usage(
             if cfg.surge_api_key:
                 headers["Authorization"] = f"Bearer {cfg.surge_api_key}"
 
-            # Explicit SSL context for certificate verification
-            ssl_ctx = ssl.create_default_context()
-
             req = urllib.request.Request(
                 f"{cfg.surge_api_url.rstrip('/')}/api/events",
                 data=json.dumps(payload).encode(),
                 headers=headers,
                 method="POST",
             )
-            # C4: use _opener (no redirects) instead of urlopen
-            _opener.open(req, timeout=_REQUEST_TIMEOUT, context=ssl_ctx)
+            # C4: use _opener (no redirects) instead of urlopen.
+            # SSL context is attached to the HTTPSHandler at opener build time.
+            _opener.open(req, timeout=_REQUEST_TIMEOUT)
         except Exception as e:
             # H8 fix: log instead of silently swallowing
             logger.debug("Surge event report failed: %s", e)

@@ -5,10 +5,27 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "surge-sdk"
 version = "0.1.0"
-description = "Lightweight cost-attribution wrapper for Anthropic and OpenAI SDKs"
+description = "Lightweight cost-attribution wrapper for Anthropic, OpenAI, and Google Gemini Python SDKs"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
+authors = [
+    {name = "Jordan Brooks", email = "jordan@greenpaths.io"},
+]
+keywords = ["anthropic", "openai", "gemini", "ai", "llm", "cost", "tracking", "observability", "claude", "gpt"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
 dependencies = []
 
 [project.optional-dependencies]
@@ -16,6 +33,12 @@ anthropic = ["anthropic>=0.25.0,<2.0.0"]
 openai = ["openai>=1.0.0,<3.0.0"]
 gemini = ["google-genai>=1.0.0,<2.0.0"]
 all = ["anthropic>=0.25.0,<2.0.0", "openai>=1.0.0,<3.0.0", "google-genai>=1.0.0,<2.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/JB-GP/affixly"
+Documentation = "https://github.com/JB-GP/affixly/blob/main/surge-sdk/docs/getting-started.md"
+Repository = "https://github.com/JB-GP/affixly"
+Issues = "https://github.com/JB-GP/affixly/issues"
 
 [tool.setuptools.packages.find]
 include = ["surge_sdk*"]
