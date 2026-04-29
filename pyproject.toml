@@ -3,7 +3,7 @@ requires = ["setuptools>=68.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "surge-sdk"
+name = "affixly-surge-sdk"
 version = "0.1.0"
 description = "Lightweight cost-attribution wrapper for Anthropic, OpenAI, and Google Gemini Python SDKs"
 readme = "README.md"

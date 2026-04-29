@@ -1,20 +1,22 @@
-# surge-sdk
+# affixly-surge-sdk
 
 Lightweight cost-attribution wrapper for the Anthropic, OpenAI, and Google Gemini Python SDKs. Track AI spend by product line, feature, and customer with a one-line import change — no proxy, no infrastructure, no code rewrite.
+
+> **PyPI distribution name:** `affixly-surge-sdk`. **Python import name:** `surge_sdk`. They differ because `surge-sdk` was already taken on PyPI by an unrelated project — the import name we control stays clean.
 
 ## Install
 
 ```bash
-pip install surge-sdk
+pip install affixly-surge-sdk
 ```
 
 Install alongside whichever provider SDK you use:
 
 ```bash
-pip install "surge-sdk[anthropic]"   # Anthropic (Claude)
-pip install "surge-sdk[openai]"      # OpenAI (GPT)
-pip install "surge-sdk[gemini]"      # Google Gemini
-pip install "surge-sdk[all]"         # All three
+pip install "affixly-surge-sdk[anthropic]"   # Anthropic (Claude)
+pip install "affixly-surge-sdk[openai]"      # OpenAI (GPT)
+pip install "affixly-surge-sdk[gemini]"      # Google Gemini
+pip install "affixly-surge-sdk[all]"         # All three
 ```
 
 ## Quick start
