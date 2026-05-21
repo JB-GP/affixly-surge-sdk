@@ -128,11 +128,16 @@ def report_usage(
     input_tokens,
     output_tokens,
     tags=None,
+    requested_model=None,
 ):
     """Submit a usage event to Surge's /api/events endpoint.
 
     Runs on a shared thread pool (4 workers) so the caller's code path
     is never blocked. Failures are logged, not swallowed silently.
+
+    `requested_model` is the original model name passed by the caller
+    when a model override changed it. Omitted from the payload when
+    no override occurred.
     """
     cfg = get_config()
     if not cfg.surge_api_url:
@@ -157,6 +162,12 @@ def report_usage(
         "feature": _truncate(merged_tags.get("feature")),
         "customer_id": _truncate(merged_tags.get("customer_id")),
     }
+
+    if requested_model:
+        requested_cost = estimate_cost(provider, requested_model, input_tokens, output_tokens)
+        if math.isfinite(requested_cost):
+            payload["requested_model"] = _truncate(requested_model)
+            payload["requested_cost_usd"] = round(requested_cost, 6)
 
     def _send():
         try:

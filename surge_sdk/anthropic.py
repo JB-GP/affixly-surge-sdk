@@ -9,6 +9,7 @@ response.usage, and reports to Surge in the background.
 import logging
 from surge_sdk._config import get_config
 from surge_sdk._reporter import report_usage
+from surge_sdk._resolve import resolve_model
 
 # H6 fix: explicit imports instead of wildcard — only re-export what users need
 from anthropic import Anthropic as _RealAnthropic, AsyncAnthropic as _RealAsyncAnthropic
@@ -40,16 +41,30 @@ def _build_surge_user_id(per_request_tags=None):
     return None
 
 
-def _extract_and_report(response, tags=None):
+def _extract_and_report(response, tags=None, requested_model=None):
     try:
         model = getattr(response, 'model', 'unknown')
         usage = getattr(response, 'usage', None)
         if usage:
             inp = getattr(usage, 'input_tokens', 0) or 0
             out = getattr(usage, 'output_tokens', 0) or 0
-            report_usage("anthropic", model, inp, out, tags)
+            report_usage("anthropic", model, inp, out, tags, requested_model=requested_model)
     except Exception as e:
         logger.debug("Failed to extract usage from Anthropic response: %s", e)
+
+
+def _apply_override(kwargs):
+    """Pop surge_model, resolve override, mutate kwargs['model'] if changed.
+
+    Returns the original-requested model when an override was applied,
+    else None — passed through to the reporter as `requested_model`.
+    """
+    surge_model = kwargs.pop("surge_model", None)
+    requested = kwargs.get("model", "unknown")
+    actual, overridden_from = resolve_model(requested, surge_model)
+    if actual != requested:
+        kwargs["model"] = actual
+    return overridden_from
 
 
 class _SurgeMessages:
@@ -58,6 +73,7 @@ class _SurgeMessages:
 
     def create(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        overridden_from = _apply_override(kwargs)
         # H11 fix: copy metadata dict before mutating
         metadata = dict(kwargs.get("metadata") or {})
         user_id = _build_surge_user_id(surge_tags)
@@ -66,11 +82,12 @@ class _SurgeMessages:
             kwargs["metadata"] = metadata
 
         response = self._real.create(**kwargs)
-        _extract_and_report(response, surge_tags)
+        _extract_and_report(response, surge_tags, requested_model=overridden_from)
         return response
 
     def stream(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        _apply_override(kwargs)
         metadata = dict(kwargs.get("metadata") or {})
         user_id = _build_surge_user_id(surge_tags)
         if user_id:
@@ -88,6 +105,7 @@ class _AsyncSurgeMessages:
 
     async def create(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        overridden_from = _apply_override(kwargs)
         metadata = dict(kwargs.get("metadata") or {})
         user_id = _build_surge_user_id(surge_tags)
         if user_id:
@@ -95,11 +113,12 @@ class _AsyncSurgeMessages:
             kwargs["metadata"] = metadata
 
         response = await self._real.create(**kwargs)
-        _extract_and_report(response, surge_tags)
+        _extract_and_report(response, surge_tags, requested_model=overridden_from)
         return response
 
     async def stream(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        _apply_override(kwargs)
         metadata = dict(kwargs.get("metadata") or {})
         user_id = _build_surge_user_id(surge_tags)
         if user_id:

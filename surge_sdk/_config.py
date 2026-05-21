@@ -20,10 +20,15 @@ class SurgeConfig:
     default_tags: tuple = ()  # stored as tuple of (k, v) pairs for immutability
     surge_api_url: Optional[str] = None
     surge_api_key: Optional[str] = None
+    model_overrides: tuple = ()  # stored as tuple of (requested, actual) pairs for immutability
 
     @property
     def default_tags_dict(self) -> dict:
         return dict(self.default_tags)
+
+    @property
+    def model_overrides_dict(self) -> dict:
+        return dict(self.model_overrides)
 
 
 # Module-level mutable reference — protected by _lock
@@ -35,6 +40,7 @@ def configure(
     default_tags: Optional[dict] = None,
     surge_api_url: Optional[str] = None,
     surge_api_key: Optional[str] = None,
+    model_overrides: Optional[dict] = None,
 ):
     """Set global tags injected into every provider API call.
 
@@ -45,11 +51,17 @@ def configure(
     with _lock:
         cur = _config
         new_tags = tuple((default_tags or {}).items()) if default_tags is not None else cur.default_tags
+        new_overrides = (
+            tuple((model_overrides or {}).items())
+            if model_overrides is not None
+            else cur.model_overrides
+        )
         _config = SurgeConfig(
             product_line=product_line if product_line is not None else cur.product_line,
             default_tags=new_tags,
             surge_api_url=surge_api_url if surge_api_url is not None else cur.surge_api_url,
             surge_api_key=surge_api_key if surge_api_key is not None else cur.surge_api_key,
+            model_overrides=new_overrides,
         )
 
     # Validate HTTPS — import here to avoid circular import at module level

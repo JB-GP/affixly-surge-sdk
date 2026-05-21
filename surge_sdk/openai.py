@@ -8,6 +8,7 @@ from response.usage, and reports to Surge in the background.
 
 import logging
 from surge_sdk._reporter import report_usage
+from surge_sdk._resolve import resolve_model
 
 # H6 fix: explicit imports instead of wildcard
 from openai import OpenAI as _RealOpenAI, AsyncOpenAI as _RealAsyncOpenAI
@@ -25,16 +26,25 @@ __all__ = [
 ]
 
 
-def _extract_and_report(response, tags=None):
+def _extract_and_report(response, tags=None, requested_model=None):
     try:
         model = getattr(response, 'model', 'unknown') or 'unknown'
         usage = getattr(response, 'usage', None)
         if usage:
             inp = getattr(usage, 'prompt_tokens', 0) or 0
             out = getattr(usage, 'completion_tokens', 0) or 0
-            report_usage("openai", model, inp, out, tags)
+            report_usage("openai", model, inp, out, tags, requested_model=requested_model)
     except Exception as e:
         logger.debug("Failed to extract usage from OpenAI response: %s", e)
+
+
+def _apply_override(kwargs):
+    surge_model = kwargs.pop("surge_model", None)
+    requested = kwargs.get("model", "unknown")
+    actual, overridden_from = resolve_model(requested, surge_model)
+    if actual != requested:
+        kwargs["model"] = actual
+    return overridden_from
 
 
 class _SurgeCompletions:
@@ -43,8 +53,9 @@ class _SurgeCompletions:
 
     def create(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        overridden_from = _apply_override(kwargs)
         response = self._real.create(**kwargs)
-        _extract_and_report(response, surge_tags)
+        _extract_and_report(response, surge_tags, requested_model=overridden_from)
         return response
 
     def __getattr__(self, name):
@@ -57,8 +68,9 @@ class _AsyncSurgeCompletions:
 
     async def create(self, **kwargs):
         surge_tags = kwargs.pop("surge_tags", None)
+        overridden_from = _apply_override(kwargs)
         response = await self._real.create(**kwargs)
-        _extract_and_report(response, surge_tags)
+        _extract_and_report(response, surge_tags, requested_model=overridden_from)
         return response
 
     def __getattr__(self, name):

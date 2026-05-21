@@ -4,6 +4,8 @@ Lightweight cost-attribution wrapper for the Anthropic, OpenAI, and Google Gemin
 
 > **PyPI distribution name:** `affixly-surge-sdk`. **Python import name:** `surge_sdk`. They differ because `surge-sdk` was already taken on PyPI by an unrelated project — the import name we control stays clean.
 
+> Using Node.js / TypeScript? See [`affixly-surge-sdk` on npm](https://www.npmjs.com/package/affixly-surge-sdk) — same interface, same event shape ([source](https://github.com/JB-GP/affixly-surge-sdk-node)).
+
 ## Install
 
 ```bash
@@ -53,6 +55,34 @@ response = client.messages.create(
     surge_tags={"feature": "summarize", "customer_id": "cust_abc123"},
 )
 ```
+
+## Model overrides
+
+Redirect calls to a different model than the call site declares — useful for
+multi-tenant plan tiering (Starter → Haiku, Business → Opus) without touching
+every call site:
+
+```python
+# Global rule — applies to every call the SDK intercepts
+configure(
+    surge_api_url="...",
+    model_overrides={
+        "claude-opus-4-6": "claude-sonnet-4-6",   # all Opus calls become Sonnet
+    },
+)
+
+# Per-call rule — wins over the global map
+response = client.messages.create(
+    model="claude-opus-4-6",                  # intent declared in code
+    max_tokens=1024,
+    messages=[...],
+    surge_model=get_tenant_model(tenant_id),  # runtime tier resolution
+    surge_tags={"feature": "chat", "customer_id": str(tenant_id)},
+)
+```
+
+The dashboard logs both the requested and actual model on every override,
+plus a "Savings from model overrides" card showing the cost delta over time.
 
 ## How it works
 

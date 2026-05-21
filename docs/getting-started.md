@@ -72,6 +72,7 @@ configure(
 | `surge_api_key` | Yes | SDK API key from Settings → SDK |
 | `product_line` | No | Top-level cost bucket (e.g. `"my-app"`, `"api-service"`) |
 | `default_tags` | No | Dict of tags merged into every request |
+| `model_overrides` | No | Dict mapping requested model → actual model (see [Model overrides](#model-overrides)) |
 
 ---
 
@@ -170,6 +171,84 @@ Tags are merged with your `default_tags` from `configure()`. Per-request values 
 | `customer_id` | Which of your customers triggered it | `"cust_123"`, `"tenant_42"` |
 
 All tags are optional. Use as many or as few as you need.
+
+---
+
+## Model overrides
+
+The SDK can redirect calls to a different model than the one declared at the
+call site. The call site keeps declaring intent ("use Opus here"); the SDK
+enforces the actual model used ("but for this tenant, use Sonnet"). Useful
+for multi-tenant SaaS where plan tier should determine model capability.
+
+### Global overrides — `model_overrides` in `configure()`
+
+A static map applied to every call the SDK intercepts:
+
+```python
+from surge_sdk import configure
+
+configure(
+    surge_api_url="...",
+    surge_api_key="surge_sk_...",
+    product_line="my-app",
+    model_overrides={
+        "claude-opus-4-5": "claude-sonnet-4-6",   # all Opus calls become Sonnet
+        "claude-opus-4-6": "claude-sonnet-4-6",   # future-proofed
+    },
+)
+```
+
+### Per-request overrides — `surge_model` kwarg
+
+For dynamic per-call routing (typical multi-tenant pattern: resolve the
+tenant's plan at request time, pick a model):
+
+```python
+PLAN_MODEL_MAP = {
+    "starter":  "claude-haiku-4-5",
+    "solo_pro": "claude-sonnet-4-6",
+    "business": "claude-opus-4-5",
+}
+
+def get_tenant_model(tenant_id):
+    plan = get_tenant_plan(tenant_id)
+    return PLAN_MODEL_MAP.get(plan, "claude-sonnet-4-6")
+
+response = client.messages.create(
+    model="claude-opus-4-5",                       # intent declared in code
+    max_tokens=1024,
+    messages=[{"role": "user", "content": prompt}],
+    surge_model=get_tenant_model(tenant_id),       # control — resolved at runtime
+    surge_tags={"feature": "chat", "customer_id": str(tenant_id)},
+)
+```
+
+`surge_model` and `surge_tags` are both stripped from the request before it
+reaches the provider SDK.
+
+### Precedence
+
+1. `surge_model` (per-request) — wins outright
+2. `model_overrides` (global) — applies when there's no per-request value
+3. `model=` in the call — used unchanged when neither override matches
+
+### What the dashboard shows
+
+When an override fires, Surge logs both the requested and the actual model
+on the event. The Usage table reveals a "Requested" column showing the
+original model the call asked for. The Overview surfaces a "Savings from
+model overrides" card with the cost delta this month.
+
+### What this does *not* do
+
+- The SDK does not validate that the override target is a real model name. A
+  typo will reach the provider unchanged and produce a provider-side error.
+- The SDK does not block or rate-limit based on tier. That's app logic.
+- The SDK does not match model names by regex or wildcard. Exact match only.
+- Streaming calls (`.stream()`) accept `surge_model` and apply the override,
+  but usage is not reported (same as without overrides — streaming token
+  tracking is on the roadmap).
 
 ---
 
@@ -321,7 +400,7 @@ Response:
 The SDK is fully reversible. To remove:
 
 1. Change `from surge_sdk import anthropic` back to `import anthropic` (same for openai/gemini)
-2. Remove `surge_tags={...}` keyword arguments from any call sites
+2. Remove `surge_tags={...}` and `surge_model=...` keyword arguments from any call sites
 3. Remove the `configure()` call
 4. Remove environment variables (`SURGE_API_URL`, `SURGE_SDK_KEY`)
 5. `pip uninstall surge-sdk`
