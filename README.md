@@ -94,11 +94,13 @@ plus a "Savings from model overrides" card showing the cost delta over time.
 
 | Provider | Import | What's tracked |
 |---|---|---|
-| Anthropic | `from surge_sdk import anthropic` | `messages.create()`, `messages.stream()` |
-| OpenAI | `from surge_sdk import openai` | `chat.completions.create()` |
-| Google Gemini | `from surge_sdk import gemini as genai` | `models.generate_content()` |
+| Anthropic | `from surge_sdk import anthropic` | `messages.create()`, `messages.create(stream=True)`, `messages.stream()` (context manager) |
+| OpenAI | `from surge_sdk import openai` | `chat.completions.create()`, `chat.completions.create(stream=True)` |
+| Google Gemini | `from surge_sdk import gemini as genai` | `models.generate_content()`, `models.generate_content_stream()` |
 
-Both sync and async clients are supported for all providers.
+Both sync and async clients are supported for all providers (Anthropic and OpenAI; Gemini sync-only matches the upstream SDK's wrapping surface).
+
+**Streaming note for OpenAI:** the SDK forces `stream_options.include_usage=true` on streaming calls so the final chunk carries cumulative usage. Callers iterating raw chunks will see one extra final chunk with `usage` populated — same shape as if you'd set it yourself.
 
 ## Documentation
 

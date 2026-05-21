@@ -246,9 +246,9 @@ model overrides" card with the cost delta this month.
   typo will reach the provider unchanged and produce a provider-side error.
 - The SDK does not block or rate-limit based on tier. That's app logic.
 - The SDK does not match model names by regex or wildcard. Exact match only.
-- Streaming calls (`.stream()`) accept `surge_model` and apply the override,
-  but usage is not reported (same as without overrides — streaming token
-  tracking is on the roadmap).
+- Streaming calls now report usage (0.3.0+) and overrides apply to them
+  exactly like non-streaming calls — same `surge_model` kwarg, same
+  precedence, same payload fields.
 
 ---
 
@@ -437,4 +437,4 @@ The SDK estimates cost using the provider's published per-token pricing. For pro
 Yes. The reporting thread is non-blocking and fault-tolerant. It's designed to be invisible in production workloads.
 
 **What about streaming responses?**
-For non-streaming calls (`create()`), token counts are read from the response and reported immediately. For streaming calls (`.stream()`), final token counts aren't available mid-stream, so streaming calls are not currently tracked. Use non-streaming for tracked calls, or wait for a future release that collects counts from the stream's final message.
+Streaming is tracked as of 0.3.0. For Anthropic `messages.create(stream=True)` and `messages.stream()`, token counts are absorbed from the stream's `message_start` and `message_delta` events and reported once iteration completes (or the context manager exits — whichever comes first). For OpenAI `chat.completions.create(stream=True)`, the SDK forces `stream_options.include_usage=True` so the final chunk carries cumulative usage; callers iterating raw chunks will see one extra final chunk. For Gemini `generate_content_stream()`, token counts are read from the final response's `usage_metadata`. Early `break` from iteration still reports whatever was collected — partial usage is correct usage.
