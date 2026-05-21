@@ -113,9 +113,14 @@ def _truncate(value, max_len=_MAX_TAG_LENGTH):
 
 
 def estimate_cost(provider, model, input_tokens, output_tokens):
+    """Estimate cost using longest-substring matching against the pricing
+    table. Sorting keys by descending length first avoids the classic
+    `gpt-4o-mini` being misclassified as `gpt-4o` because the iteration
+    happened to hit the shorter key first.
+    """
     provider_pricing = _PRICING.get(provider, {})
     rates = _DEFAULT_PRICING
-    for key, r in provider_pricing.items():
+    for key, r in sorted(provider_pricing.items(), key=lambda kv: -len(kv[0])):
         if key in model:
             rates = r
             break
