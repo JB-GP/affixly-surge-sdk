@@ -102,6 +102,36 @@ def _absorb_stream_event(state, event):
         pass
 
 
+def _state_incomplete(state):
+    """True when the proxy never saw usage flow through its own iterator."""
+    return state['model'] == 'unknown' or (
+        not state['input_tokens'] and not state['output_tokens']
+    )
+
+
+def _fill_state_from_final(state, final):
+    """Populate `state` from a fully-accumulated Message (model + usage).
+
+    Fallback for callers that drain the stream via helpers like `text_stream`
+    or `get_final_message()` instead of iterating events through the proxy —
+    those bypass `_absorb_stream_event`, leaving state at its defaults. The
+    final message carries the same totals, so we read them off it instead.
+    """
+    if final is None:
+        return
+    mdl = getattr(final, 'model', None)
+    if mdl:
+        state['model'] = mdl
+    u = getattr(final, 'usage', None)
+    if u is not None:
+        inp = getattr(u, 'input_tokens', None)
+        if inp:
+            state['input_tokens'] = inp
+        out = getattr(u, 'output_tokens', None)
+        if out is not None:
+            state['output_tokens'] = out
+
+
 class _SurgeStreamProxy:
     """Wraps an Anthropic Stream/MessageStream. Reports usage exactly once
     when iteration completes or the context-manager exits (whichever first).
@@ -121,6 +151,11 @@ class _SurgeStreamProxy:
         if self._reported:
             return
         self._reported = True
+        if _state_incomplete(self._state):
+            try:
+                _fill_state_from_final(self._state, self._real.get_final_message())
+            except Exception as e:
+                logger.debug("Streaming usage fallback (get_final_message) failed: %s", e)
         try:
             report_usage(
                 "anthropic",
@@ -195,6 +230,16 @@ class _AsyncSurgeStreamProxy:
         except Exception as e:
             logger.debug("Failed to report streaming usage: %s", e)
 
+    async def _report_async(self):
+        if self._reported:
+            return
+        if _state_incomplete(self._state):
+            try:
+                _fill_state_from_final(self._state, await self._real.get_final_message())
+            except Exception as e:
+                logger.debug("Streaming usage fallback (get_final_message) failed: %s", e)
+        self._report()
+
     def __aiter__(self):
         if self._aiter is None:
             self._aiter = self._real.__aiter__()
@@ -206,7 +251,7 @@ class _AsyncSurgeStreamProxy:
         try:
             event = await self._aiter.__anext__()
         except StopAsyncIteration:
-            self._report()
+            await self._report_async()
             raise
         _absorb_stream_event(self._state, event)
         return event
@@ -219,7 +264,7 @@ class _AsyncSurgeStreamProxy:
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        self._report()
+        await self._report_async()
         return await self._real.__aexit__(exc_type, exc_val, exc_tb)
 
     def __getattr__(self, name):

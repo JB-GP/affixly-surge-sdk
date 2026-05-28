@@ -27,5 +27,5 @@ Usage:
 
 from surge_sdk._config import configure, get_config
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 __all__ = ["configure", "get_config"]
