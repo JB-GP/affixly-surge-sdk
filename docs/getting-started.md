@@ -38,17 +38,19 @@ You'll need two values going forward:
 ## 3. Install the SDK
 
 ```bash
-pip install surge-sdk
+pip install affixly-surge-sdk
 ```
 
 Install alongside whichever provider SDK you use:
 
 ```bash
-pip install surge-sdk anthropic       # Anthropic (Claude)
-pip install surge-sdk openai          # OpenAI (GPT, Whisper)
-pip install surge-sdk google-genai    # Google Gemini
-pip install "surge-sdk[all]"          # All providers
+pip install affixly-surge-sdk anthropic       # Anthropic (Claude)
+pip install affixly-surge-sdk openai          # OpenAI (GPT, Whisper)
+pip install affixly-surge-sdk google-genai    # Google Gemini
+pip install "affixly-surge-sdk[all]"          # All providers
 ```
+
+> The PyPI package name is `affixly-surge-sdk` (hyphenated). The Python import path is `surge_sdk` (underscored) — `from surge_sdk import ...` everywhere below.
 
 ---
 
@@ -403,7 +405,7 @@ The SDK is fully reversible. To remove:
 2. Remove `surge_tags={...}` and `surge_model=...` keyword arguments from any call sites
 3. Remove the `configure()` call
 4. Remove environment variables (`SURGE_API_URL`, `SURGE_SDK_KEY`)
-5. `pip uninstall surge-sdk`
+5. `pip uninstall affixly-surge-sdk`
 
 Your application works identically without the SDK. Previously recorded data stays in Surge.
 
