@@ -83,6 +83,17 @@ _PRICING = {
 }
 _DEFAULT_PRICING = (3.0, 15.0)
 
+# Audio transcription/translation pricing (USD per minute of audio). Billed by
+# duration, not tokens — a separate model from _PRICING above.
+_AUDIO_PRICING = {
+    "openai": {
+        "whisper-1":             0.006,
+        "gpt-4o-transcribe":     0.006,
+        "gpt-4o-mini-transcribe": 0.003,
+    },
+}
+_DEFAULT_AUDIO_RATE = 0.006
+
 
 def _validate_url(url):
     """Warn if surge_api_url is not HTTPS (except localhost for dev)."""
@@ -127,6 +138,21 @@ def estimate_cost(provider, model, input_tokens, output_tokens):
     return (input_tokens / 1_000_000) * rates[0] + (output_tokens / 1_000_000) * rates[1]
 
 
+def estimate_audio_cost(provider, model, audio_seconds):
+    """Estimate transcription/translation cost from audio duration (seconds).
+
+    Per-minute billing, longest-substring model matching (same scheme as
+    estimate_cost) against _AUDIO_PRICING.
+    """
+    table = _AUDIO_PRICING.get(provider, {})
+    rate = _DEFAULT_AUDIO_RATE
+    for key, r in sorted(table.items(), key=lambda kv: -len(kv[0])):
+        if key in model:
+            rate = r
+            break
+    return (max(audio_seconds, 0.0) / 60.0) * rate
+
+
 def report_usage(
     provider,
     model,
@@ -134,6 +160,7 @@ def report_usage(
     output_tokens,
     tags=None,
     requested_model=None,
+    cost_usd=None,
 ):
     """Submit a usage event to Surge's /api/events endpoint.
 
@@ -149,7 +176,9 @@ def report_usage(
         return
 
     import math
-    cost = estimate_cost(provider, model, input_tokens, output_tokens)
+    # cost_usd lets callers (e.g. the audio/transcription path) supply a
+    # precomputed cost that isn't token-based; otherwise estimate from tokens.
+    cost = cost_usd if cost_usd is not None else estimate_cost(provider, model, input_tokens, output_tokens)
     if not math.isfinite(cost):
         logger.warning("Cost estimate is not finite (model=%s), skipping report", model)
         return

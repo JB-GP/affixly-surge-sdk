@@ -7,7 +7,7 @@ from response.usage, and reports to Surge in the background.
 """
 
 import logging
-from surge_sdk._reporter import report_usage
+from surge_sdk._reporter import report_usage, estimate_audio_cost
 from surge_sdk._resolve import resolve_model
 
 # H6 fix: explicit imports instead of wildcard
@@ -261,12 +261,88 @@ class _AsyncSurgeChat:
         return getattr(self._real, name)
 
 
+def _report_transcription(response, model, tags):
+    """Report a transcription/translation call. Whisper bills per audio-minute,
+    not tokens — cost comes from `response.duration` (seconds), which the OpenAI
+    API only returns when the caller sets response_format="verbose_json". When
+    duration is absent we still report the request with cost 0 so the call is
+    visible (just without a cost estimate).
+    """
+    try:
+        duration = getattr(response, 'duration', None)
+        seconds = duration if isinstance(duration, (int, float)) else 0.0
+        cost = estimate_audio_cost("openai", model or "unknown", seconds)
+        report_usage("openai", model or "unknown", 0, 0, tags, cost_usd=cost)
+    except Exception as e:
+        logger.debug("Failed to report transcription usage: %s", e)
+
+
+class _SurgeTranscriptions:
+    def __init__(self, real):
+        self._real = real
+
+    def create(self, **kwargs):
+        surge_tags = kwargs.pop("surge_tags", None)
+        model = kwargs.get("model", "unknown")
+        response = self._real.create(**kwargs)
+        _report_transcription(response, model, surge_tags)
+        return response
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _AsyncSurgeTranscriptions:
+    def __init__(self, real):
+        self._real = real
+
+    async def create(self, **kwargs):
+        surge_tags = kwargs.pop("surge_tags", None)
+        model = kwargs.get("model", "unknown")
+        response = await self._real.create(**kwargs)
+        _report_transcription(response, model, surge_tags)
+        return response
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _SurgeAudio:
+    def __init__(self, real):
+        self._real = real
+
+    @property
+    def transcriptions(self):
+        return _SurgeTranscriptions(self._real.transcriptions)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+class _AsyncSurgeAudio:
+    def __init__(self, real):
+        self._real = real
+
+    @property
+    def transcriptions(self):
+        return _AsyncSurgeTranscriptions(self._real.transcriptions)
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
 class OpenAI(_RealOpenAI):
     @property
     def chat(self):
         if not hasattr(self, '_surge_chat'):
             self._surge_chat = _SurgeChat(super().chat)
         return self._surge_chat
+
+    @property
+    def audio(self):
+        if not hasattr(self, '_surge_audio'):
+            self._surge_audio = _SurgeAudio(super().audio)
+        return self._surge_audio
 
 
 class AsyncOpenAI(_RealAsyncOpenAI):
@@ -275,3 +351,9 @@ class AsyncOpenAI(_RealAsyncOpenAI):
         if not hasattr(self, '_surge_async_chat'):
             self._surge_async_chat = _AsyncSurgeChat(super().chat)
         return self._surge_async_chat
+
+    @property
+    def audio(self):
+        if not hasattr(self, '_surge_async_audio'):
+            self._surge_async_audio = _AsyncSurgeAudio(super().audio)
+        return self._surge_async_audio
