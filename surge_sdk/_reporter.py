@@ -9,6 +9,7 @@ Bearer token leakage. Failures are logged (not swallowed silently).
 import atexit
 import logging
 import ssl
+import threading
 import warnings
 from concurrent.futures import ThreadPoolExecutor
 from surge_sdk._config import get_config
@@ -228,3 +229,69 @@ def report_usage(
     except RuntimeError:
         # Pool has been shut down (interpreter exiting) — drop silently
         pass
+
+
+def track(event, tenant, properties=None):
+    """Send a product event to Surge's /api/track endpoint.
+
+    Unlike `report_usage` (cost/token attribution tied to a provider call),
+    this records arbitrary product events — feature usage, lifecycle
+    milestones, activation funnels — keyed by tenant.
+
+    The `product` field is read from the globally configured `product_line`
+    (set once via `configure(product_line=...)`).
+
+    Fire-and-forget: the POST runs on a daemon thread so the caller is never
+    blocked and never sees an exception. A failed request is logged as a
+    warning, not raised. If `configure()` hasn't supplied both `surge_api_url`
+    and `surge_api_key`, the event is dropped with a warning.
+
+    Example:
+        from surge_sdk import track
+        track(
+            event="parse.repo.connected",
+            tenant="github_username_or_user_id",
+            properties={"repo": "owner/repo", "language": "python"},
+        )
+    """
+    cfg = get_config()
+    if not cfg.surge_api_url or not cfg.surge_api_key:
+        logger.warning(
+            "surge_sdk.track() called before configure() set surge_api_url and "
+            "surge_api_key — event %r dropped.",
+            event,
+        )
+        return
+
+    payload = {
+        "event": _truncate(event),
+        "tenant": _truncate(tenant),
+        "product": _truncate(cfg.product_line),
+        "properties": properties or {},
+    }
+
+    # Snapshot config values now so the thread doesn't re-read a config that
+    # may have changed (or to avoid touching the lock from the worker thread).
+    api_url = cfg.surge_api_url.rstrip("/")
+    api_key = cfg.surge_api_key
+
+    def _send():
+        try:
+            import json
+            headers = {
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            }
+            req = urllib.request.Request(
+                f"{api_url}/api/track",
+                data=json.dumps(payload).encode(),
+                headers=headers,
+                method="POST",
+            )
+            # C4: use _opener (no redirects) to prevent Bearer token leakage.
+            _opener.open(req, timeout=_REQUEST_TIMEOUT)
+        except Exception as e:
+            logger.warning("Surge track() failed for event %r: %s", event, e)
+
+    # Fire-and-forget on a daemon thread so it never holds up interpreter exit.
+    threading.Thread(target=_send, daemon=True, name="surge-sdk-track").start()

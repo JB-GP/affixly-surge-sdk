@@ -84,6 +84,28 @@ response = client.messages.create(
 The dashboard logs both the requested and actual model on every override,
 plus a "Savings from model overrides" card showing the cost delta over time.
 
+## Product event tracking
+
+Beyond AI cost, you can record arbitrary product events — feature usage,
+lifecycle milestones, activation funnels — keyed by tenant. The `product`
+comes from the `product_line` you set in `configure()`:
+
+```python
+from surge_sdk import track
+
+track(
+    event="parse.repo.connected",
+    tenant="github_username_or_user_id",
+    properties={"repo": "owner/repo", "language": "python"},
+)
+```
+
+This POSTs `{event, tenant, product, properties}` to `/api/track` on a
+background thread. Like usage reporting, it's fire-and-forget: the caller is
+never blocked and never sees an exception. If Surge isn't configured (no
+`surge_api_url` / `surge_api_key`) or the request fails, a warning is logged
+and the event is dropped — your application is never affected.
+
 ## How it works
 
 - The wrapper intercepts `messages.create()` (or the equivalent for OpenAI / Gemini), reads token counts from the response, and POSTs a usage event to your Surge backend on a background thread.

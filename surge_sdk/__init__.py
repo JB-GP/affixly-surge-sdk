@@ -23,9 +23,18 @@ Usage:
         # Optional per-request tags:
         metadata={"customer_id": "cust_123", "feature": "chat"},
     )
+
+    # Track arbitrary product events (not tied to an AI call):
+    from surge_sdk import track
+    track(
+        event="parse.repo.connected",
+        tenant="github_username_or_user_id",
+        properties={"repo": "owner/repo", "language": "python"},
+    )
 """
 
 from surge_sdk._config import configure, get_config
+from surge_sdk._reporter import track
 
-__version__ = "0.5.0"
-__all__ = ["configure", "get_config"]
+__version__ = "0.6.0"
+__all__ = ["configure", "get_config", "track"]

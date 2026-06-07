@@ -254,6 +254,45 @@ model overrides" card with the cost delta this month.
 
 ---
 
+## Product event tracking
+
+AI cost is one signal; what your users actually *do* is another. Use
+`track()` to record arbitrary product events — feature usage, lifecycle
+milestones, activation funnels — keyed by tenant. These are separate from
+the cost/token events the provider wrappers emit.
+
+```python
+from surge_sdk import track
+
+track(
+    event="parse.repo.connected",
+    tenant="github_username_or_user_id",
+    properties={"repo": "owner/repo", "language": "python"},
+)
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `event` | Yes | Event name, e.g. `"parse.repo.connected"`, `"export.completed"` |
+| `tenant` | Yes | Who triggered it — your user/tenant identifier |
+| `properties` | No | Dict of extra context attached to the event |
+
+The `product` field is filled automatically from the `product_line` you set
+in `configure()`, so there's nothing extra to pass. Under the hood `track()`
+POSTs `{event, tenant, product, properties}` to `/api/track` with your SDK
+API key.
+
+Same operational guarantees as usage reporting:
+
+- **Non-blocking** — the POST runs on a background daemon thread; `track()`
+  returns immediately.
+- **Never raises** — a failed request is logged as a warning, never
+  propagated to your code.
+- **Drops safely** — if `configure()` hasn't supplied `surge_api_url` and
+  `surge_api_key`, the event is dropped with a warning.
+
+---
+
 ## 7. Verify it's working
 
 1. Run your application and trigger a few AI calls
