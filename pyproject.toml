@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "affixly-surge-sdk"
-version = "0.6.0"
+version = "0.7.0"
 description = "Lightweight cost-attribution wrapper for Anthropic, OpenAI, and Google Gemini Python SDKs"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,10 +35,10 @@ gemini = ["google-genai>=1.0.0,<2.0.0"]
 all = ["anthropic>=0.25.0,<2.0.0", "openai>=1.0.0,<3.0.0", "google-genai>=1.0.0,<2.0.0"]
 
 [project.urls]
-Homepage = "https://github.com/JB-GP/affixly"
-Documentation = "https://github.com/JB-GP/affixly/blob/main/surge-sdk/docs/getting-started.md"
-Repository = "https://github.com/JB-GP/affixly"
-Issues = "https://github.com/JB-GP/affixly/issues"
+Homepage = "https://github.com/JB-GP/affixly-surge-sdk"
+Documentation = "https://github.com/JB-GP/affixly-surge-sdk/blob/main/docs/getting-started.md"
+Repository = "https://github.com/JB-GP/affixly-surge-sdk"
+Issues = "https://github.com/JB-GP/affixly-surge-sdk/issues"
 
 [tool.setuptools.packages.find]
 include = ["surge_sdk*"]

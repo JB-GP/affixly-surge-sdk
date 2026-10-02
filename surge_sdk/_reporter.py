@@ -53,6 +53,101 @@ _opener = urllib.request.build_opener(
 )
 
 
+# ── Reporting lifecycle & diagnostics ────────────────────────────────────────
+# Track outstanding work so flush() can block until reports have actually been
+# sent — useful in short-lived scripts and serverless, where the atexit drain
+# may not run before the process freezes.
+_inflight_lock = threading.Lock()
+_inflight_futures = set()
+_inflight_threads = set()
+
+# Opt-in diagnostics. Surge never raises on a reporting failure; register a
+# handler to observe dropped reports (e.g. bump a metric) without changing that.
+_on_report_error = None
+
+# Warn at most once per process when the backend signals the event quota is
+# exceeded (X-Surge-Quota: exceeded). Delivery just stops counting server-side;
+# we never raise.
+_quota_warned = False
+_quota_warn_lock = threading.Lock()
+
+
+def set_diagnostics(on_report_error=None):
+    """Opt in to reporting diagnostics without changing failure behavior.
+
+    ``on_report_error(exc)`` is called best-effort whenever a usage/track report
+    fails to send. Surge still never raises into your code. Pass ``None`` to
+    clear the handler.
+    """
+    global _on_report_error
+    _on_report_error = on_report_error
+
+
+def _emit_report_error(exc):
+    handler = _on_report_error
+    if handler is None:
+        return
+    try:
+        handler(exc)
+    except Exception:
+        logger.debug("surge_sdk on_report_error handler raised; ignored")
+
+
+def _note_quota_exceeded():
+    global _quota_warned
+    with _quota_warn_lock:
+        if _quota_warned:
+            return
+        _quota_warned = True
+    warnings.warn(
+        "Surge: event quota exceeded for this period — new events are being "
+        "dropped server-side and won't appear on your dashboard. Reported once "
+        "per process; never raises. Upgrade the plan to resume ingestion.",
+        stacklevel=2,
+    )
+
+
+def _check_quota_header(response):
+    """Inspect a report response for the X-Surge-Quota signal. Best-effort."""
+    try:
+        if response is not None and response.headers.get("X-Surge-Quota") == "exceeded":
+            _note_quota_exceeded()
+    except Exception:
+        pass
+
+
+def _discard_future(fut):
+    with _inflight_lock:
+        _inflight_futures.discard(fut)
+
+
+def flush(timeout=None):
+    """Block until outstanding usage/track reports have been sent, or ``timeout``
+    seconds elapse. Returns True if everything drained, False on timeout.
+
+    Call this before a short-lived script exits or at the end of a serverless
+    invocation, where the automatic atexit drain may not run before the process
+    is frozen or killed.
+    """
+    import time as _time
+    from concurrent.futures import wait as _wait
+
+    deadline = None if timeout is None else _time.monotonic() + timeout
+    with _inflight_lock:
+        futures = list(_inflight_futures)
+        threads = list(_inflight_threads)
+
+    remaining = None if deadline is None else max(deadline - _time.monotonic(), 0)
+    _done, not_done = _wait(futures, timeout=remaining)
+    ok = not not_done
+    for t in threads:
+        remaining = None if deadline is None else max(deadline - _time.monotonic(), 0)
+        t.join(remaining)
+        if t.is_alive():
+            ok = False
+    return ok
+
+
 # Pricing tables for client-side cost estimation (per million tokens)
 _PRICING = {
     "anthropic": {
@@ -196,6 +291,9 @@ def report_usage(
         "product_line": _truncate(cfg.product_line),
         "feature": _truncate(merged_tags.get("feature")),
         "customer_id": _truncate(merged_tags.get("customer_id")),
+        # `plan` tag (spec §4.2): the customer's plan, for per-plan cost
+        # attribution on the Surge side. Only sent when present.
+        "plan": _truncate(merged_tags.get("plan")),
     }
 
     if requested_model:
@@ -219,16 +317,22 @@ def report_usage(
             )
             # C4: use _opener (no redirects) instead of urlopen.
             # SSL context is attached to the HTTPSHandler at opener build time.
-            _opener.open(req, timeout=_REQUEST_TIMEOUT)
+            resp = _opener.open(req, timeout=_REQUEST_TIMEOUT)
+            _check_quota_header(resp)
         except Exception as e:
-            # H8 fix: log instead of silently swallowing
+            # H8 fix: log instead of silently swallowing. Never raises into the
+            # caller; opt-in diagnostics observe the drop (set_diagnostics()).
             logger.debug("Surge event report failed: %s", e)
+            _emit_report_error(e)
 
     try:
-        _pool.submit(_send)
+        fut = _pool.submit(_send)
     except RuntimeError:
         # Pool has been shut down (interpreter exiting) — drop silently
-        pass
+        return
+    with _inflight_lock:
+        _inflight_futures.add(fut)
+    fut.add_done_callback(_discard_future)
 
 
 def track(event, tenant, properties=None):
@@ -289,9 +393,41 @@ def track(event, tenant, properties=None):
                 method="POST",
             )
             # C4: use _opener (no redirects) to prevent Bearer token leakage.
-            _opener.open(req, timeout=_REQUEST_TIMEOUT)
+            resp = _opener.open(req, timeout=_REQUEST_TIMEOUT)
+            _check_quota_header(resp)
         except Exception as e:
             logger.warning("Surge track() failed for event %r: %s", event, e)
+            _emit_report_error(e)
+        finally:
+            with _inflight_lock:
+                _inflight_threads.discard(t)
 
     # Fire-and-forget on a daemon thread so it never holds up interpreter exit.
-    threading.Thread(target=_send, daemon=True, name="surge-sdk-track").start()
+    # Registered so flush() can wait for it (serverless/short-lived scripts).
+    t = threading.Thread(target=_send, daemon=True, name="surge-sdk-track")
+    with _inflight_lock:
+        _inflight_threads.add(t)
+    t.start()
+
+
+def track_quota_event(kind, product_line, customer_id, plan=None, **fields):
+    """Report a quota event to Surge (spec §1.5) — a convenience wrapper around
+    track() for the other products to use.
+
+    ``kind`` is ``"ceiling_hit"`` or ``"limit_hit"`` (or a full ``"quota.*"``
+    event name). The event is scoped/named by ``customer_id``. ``plan`` plus any
+    extra keyword fields (``spend_usd``, ``ceiling_usd``, ``unit``, ``used``,
+    ``limit``, …) are passed through as event properties; None values are
+    dropped. Fire-and-forget, like track().
+
+    Example:
+        track_quota_event(
+            "ceiling_hit", product_line="forge", customer_id="cust_42",
+            plan="maker", spend_usd=9.12, ceiling_usd=9.00,
+        )
+    """
+    event = kind if str(kind).startswith("quota.") else f"quota.{kind}"
+    properties = {"product_line": product_line, "customer_id": customer_id, "plan": plan}
+    properties.update(fields)
+    properties = {k: v for k, v in properties.items() if v is not None}
+    track(event, tenant=str(customer_id or product_line or "unknown"), properties=properties)

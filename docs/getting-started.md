@@ -171,8 +171,12 @@ Tags are merged with your `default_tags` from `configure()`. Per-request values 
 | `product_line` | Set in `configure()` — which app/service | `"my-app"`, `"api"`, `"internal-tools"` |
 | `feature` | Which feature made this call | `"chat"`, `"search"`, `"summarize"` |
 | `customer_id` | Which of your customers triggered it | `"cust_123"`, `"tenant_42"` |
+| `plan` | The customer's plan — for per-plan cost attribution | `"starter"`, `"maker"`, `"business"` |
 
-All tags are optional. Use as many or as few as you need.
+All tags are optional. Use as many or as few as you need. `plan` can be set per
+call in `surge_tags` (as above) or once for every call in
+`configure(default_tags={"plan": ...})`; it is forwarded as the event's `plan`
+field so the dashboard can break spend down by plan tier.
 
 ---
 
@@ -291,6 +295,36 @@ Same operational guarantees as usage reporting:
 - **Drops safely** — if `configure()` hasn't supplied `surge_api_url` and
   `surge_api_key`, the event is dropped with a warning.
 
+### Quota events — `track_quota_event()`
+
+`track_quota_event()` is a convenience wrapper over `track()` for reporting a
+spend-ceiling or quota-limit hit (the pattern the other Affixly products use).
+It posts a `quota.ceiling_hit` / `quota.limit_hit` event scoped to a customer.
+
+```python
+from surge_sdk import track_quota_event
+
+track_quota_event(
+    "ceiling_hit",                 # or "limit_hit", or a full "quota.*" event name
+    product_line="forge",
+    customer_id="cust_42",
+    plan="maker",
+    spend_usd=9.12,
+    ceiling_usd=9.00,
+)
+```
+
+| Argument | Required | Description |
+|---|---|---|
+| `kind` | Yes | `"ceiling_hit"` or `"limit_hit"` — or a full `"quota.*"` name, used as-is |
+| `product_line` | Yes | Which product line hit the ceiling/limit |
+| `customer_id` | Yes | The customer the event is scoped to (also used as the `tenant`) |
+| `plan` | No | The customer's plan |
+| `**fields` | No | Extra event properties (`spend_usd`, `ceiling_usd`, `unit`, `used`, `limit`, …) |
+
+`plan` and the extra keyword fields become event properties; `None` values are
+dropped. Fire-and-forget, with the same guarantees as `track()`.
+
 ---
 
 ## 7. Verify it's working
@@ -326,13 +360,109 @@ Your app calls the provider SDK (Anthropic, OpenAI, Gemini)
 
 **Latency impact**: zero network hops added to the provider call. The Surge report runs on a background thread after your code has already received the response.
 
-**Failure mode**: if Surge is unreachable, the report is silently dropped. Your application's functionality is never affected.
+---
+
+## Failure semantics
+
+Two kinds of failure are kept strictly separate, and they behave differently:
+
+### Provider / API failure
+
+An error from the underlying Anthropic, OpenAI, or Gemini call — authentication,
+rate limit, bad request, timeout, network — **propagates to your code
+unchanged**. The SDK does not catch, wrap, or swallow provider errors. Any
+`try/except` you already have around the provider call keeps working exactly as
+before. For convenience, the provider exception classes are re-exported from the
+wrapper modules:
+
+```python
+from surge_sdk import anthropic
+
+try:
+    resp = client.messages.create(model="claude-sonnet-4-6", max_tokens=1024,
+                                   messages=[{"role": "user", "content": prompt}])
+except anthropic.RateLimitError:
+    ...   # same exception you'd catch from the bare SDK
+```
+
+### Surge reporting failure
+
+A failure to send the usage/track report to your Surge backend is **isolated and
+never raised** into your code. It is logged through the `surge_sdk` logger
+(usage reports at `DEBUG`, `track()` at `WARNING`) and is otherwise invisible —
+your application's behavior does not change whether Surge is reachable or not.
+
+To observe dropped reports without changing that behavior, opt in with
+`set_diagnostics()`:
+
+```python
+from surge_sdk import set_diagnostics
+
+# on_report_error(exc) is called best-effort whenever a report fails to send.
+set_diagnostics(on_report_error=lambda exc: metrics.increment("surge.report_dropped"))
+
+set_diagnostics()        # pass nothing (or None) to clear the handler
+```
+
+The handler never changes failure behavior — Surge still never raises. It only
+lets you see that a report was dropped.
+
+### Over-quota behavior
+
+When your Surge event quota is exhausted, the backend answers event reports with
+the header `X-Surge-Quota: exceeded`. The SDK then emits a Python
+`warnings.warn` **once per process** and never raises. New events are dropped
+server-side and don't count against your plan. This is expected at the
+free/over-quota boundary — raise the plan limit to resume ingestion.
+
+---
+
+## Process lifecycle
+
+Reports are sent on background workers, so the only operational concern is
+making sure they drain before the process exits.
+
+| Context | What to do |
+|---|---|
+| **Long-running server** | Nothing. Fire-and-forget is correct — workers send reports while the process keeps running. |
+| **Short-lived script** | Nothing in the normal case. An `atexit` handler drains outstanding reports on a clean interpreter exit. |
+| **Serverless / FaaS** | Call `flush()` at the end of each invocation. The platform may freeze or kill the process before the `atexit` drain runs. |
+
+### `flush()`
+
+```python
+from surge_sdk import flush
+
+ok = flush(timeout=2.0)   # block until reports drain, or 2s elapses
+```
+
+`flush(timeout=None)` blocks until all outstanding usage/track reports have been
+sent, or `timeout` seconds elapse. Returns `True` if everything drained, `False`
+on timeout. With no timeout it waits indefinitely.
+
+### Serverless example
+
+```python
+from surge_sdk import configure, flush
+
+configure(surge_api_url=..., surge_api_key=..., product_line="my-app")
+
+def handler(event, context):
+    result = do_work(event)      # AI calls reported in the background
+    flush(timeout=2.0)           # drain before the platform freezes the process
+    return result
+```
+
+Without the `flush()` call, a serverless platform can freeze the container the
+instant your handler returns, dropping reports that hadn't been sent yet.
 
 ---
 
 ## Async support
 
-The SDK wraps both sync and async clients for all providers:
+The SDK wraps both the sync and async clients for Anthropic and OpenAI. Gemini
+is sync-only, matching the upstream SDK's wrapping surface — there is no async
+Gemini client.
 
 ```python
 # Anthropic
@@ -345,7 +475,7 @@ from surge_sdk import openai
 client = openai.OpenAI()
 async_client = openai.AsyncOpenAI()
 
-# Gemini
+# Gemini (sync only)
 from surge_sdk import gemini as genai
 client = genai.Client()
 ```
@@ -450,13 +580,47 @@ Your application works identically without the SDK. Previously recorded data sta
 
 ---
 
-## Supported providers
+## Capability matrix
 
-| Provider | Import | What's tracked |
-|---|---|---|
-| Anthropic | `from surge_sdk import anthropic` | `messages.create()`, `messages.stream()` |
-| OpenAI | `from surge_sdk import openai` | `chat.completions.create()` |
-| Google Gemini | `from surge_sdk import gemini as genai` | `models.generate_content()` |
+Which methods the wrapper tracks, per provider, and where sync / async /
+streaming are supported.
+
+| Provider | Import | Wrapped method | Sync | Async | Streaming |
+|---|---|---|:--:|:--:|:--:|
+| Anthropic | `from surge_sdk import anthropic` | `messages.create()` | ✅ | ✅ | — |
+| Anthropic | | `messages.create(stream=True)` | ✅ | ✅ | ✅ |
+| Anthropic | | `messages.stream()` (context manager) | ✅ | ✅ | ✅ |
+| OpenAI | `from surge_sdk import openai` | `chat.completions.create()` | ✅ | ✅ | — |
+| OpenAI | | `chat.completions.create(stream=True)` | ✅ | ✅ | ✅ |
+| OpenAI | | `audio.transcriptions.create()` | ✅ | ✅ | — |
+| Google Gemini | `from surge_sdk import gemini as genai` | `models.generate_content()` | ✅ | — | — |
+| Google Gemini | | `models.generate_content_stream()` | ✅ | — | ✅ |
+
+Sync clients: `Anthropic` / `OpenAI` / `Client`. Async clients:
+`AsyncAnthropic` / `AsyncOpenAI`. Gemini is sync-only.
+
+**OpenAI audio transcription** tracks `whisper-1`, `gpt-4o-transcribe`, and
+`gpt-4o-mini-transcribe`. Transcription is billed per audio-minute, not per
+token: the SDK reads `response.duration`, which the OpenAI API returns only when
+you pass `response_format="verbose_json"`. Without duration the call is still
+reported, with cost `0`.
+
+---
+
+## Compatibility & versioning
+
+- **Python:** 3.9+ (per `requires-python` and the classifiers in
+  `pyproject.toml`).
+- **Provider SDKs** (install the extra you use): `anthropic>=0.25,<2`,
+  `openai>=1,<3`, `google-genai>=1,<2`.
+- **SemVer:** the public API exported from `surge_sdk` (`configure`,
+  `get_config`, `track`, `track_quota_event`, `flush`, `set_diagnostics`)
+  follows semantic versioning — breaking changes bump the major version.
+- **Version source:** single-sourced in `pyproject.toml` and read back at
+  runtime from installed package metadata as `surge_sdk.__version__`, so there
+  is no hand-maintained duplicate to drift.
+
+See [`CHANGELOG.md`](../CHANGELOG.md) for release notes.
 
 ---
 

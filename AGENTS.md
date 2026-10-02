@@ -223,11 +223,34 @@ developer for the tier→model mapping before adding this — don't assume one.
 
 ## Rolling back
 
-To untrack a call site, swap the import back to the real provider SDK. No other
-changes needed:
-```ts
-import Anthropic from '@anthropic-ai/sdk';   // was: import { anthropic } from 'affixly-surge-sdk'
+Swapping the import back is **not** enough on its own. The Surge-only keyword
+arguments (`surge_tags=...`, `surge_model=...`) are stripped by the wrapper, so
+the bare provider SDK has never seen them — leave them in place and the real SDK
+will reject the unknown kwargs with a `TypeError`. To untrack a call site you
+must both revert the import **and** remove those kwargs from every call site.
+
+**Python:**
+```python
+# 1. Revert the import
+import anthropic                          # was: from surge_sdk import anthropic
+
+# 2. Remove surge_tags / surge_model from the call (or anthropic raises on them)
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": user_input}],
+    # surge_tags={...},    ← delete
+    # surge_model=...,     ← delete
+)
 ```
+
+The same applies to Node — revert `import { anthropic } from 'affixly-surge-sdk'`
+to `import Anthropic from '@anthropic-ai/sdk'` **and** drop the `surgeTags` /
+`surgeModel` properties from each call.
+
+This matches the "Removing the SDK" checklist in `docs/getting-started.md`. For a
+full removal (not just one call site) also drop the `configure()` call, the
+`SURGE_*` env vars, and uninstall the package.
 
 ## Reference
 
