@@ -42,3 +42,6 @@ Issues = "https://github.com/JB-GP/affixly-surge-sdk/issues"
 
 [tool.setuptools.packages.find]
 include = ["surge_sdk*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

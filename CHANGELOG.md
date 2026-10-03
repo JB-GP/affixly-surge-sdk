@@ -6,6 +6,21 @@ follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- `set_diagnostics(on_report_error=...)` handlers now receive a sanitized
+  `SurgeReportError` (exported from `surge_sdk`) with `endpoint`, `status` and
+  `reason`, instead of the raw transport exception. The raw exception's
+  traceback held the `Authorization: Bearer <SDK key>` header and the event
+  payload in frame locals, which error reporters such as Sentry capture by
+  default. The new object has no traceback, no chained cause, no key and no
+  payload. Handlers that only count failures are unaffected; handlers that
+  `isinstance`-checked `urllib` errors should check `SurgeReportError.status`
+  / `.reason` instead.
+
+### Added
+- A maintained pytest suite (`tests/`, local stub HTTP server, no network) and
+  CI running it on Python 3.9 and 3.11.
+
 ### Fixed
 - `from surge_sdk import anthropic` no longer fails on `anthropic` 1.x.
   `HUMAN_PROMPT` / `AI_PROMPT` (legacy Text Completions constants, removed in

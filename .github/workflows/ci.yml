@@ -1,0 +1,33 @@
+name: CI
+
+# Runs the SDK test suite on every push and pull request to main.
+# No secrets and no network: tests point the SDK at a local stub HTTP server
+# and install a fake `anthropic` module, so no provider SDK is required.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 = the floor in pyproject's requires-python; 3.11 = what the
+        # Affixly backends run in production.
+        python-version: ["3.9", "3.11"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install
+        run: python -m pip install --upgrade pip pytest
+
+      - name: Test
+        run: python -m pytest -q
