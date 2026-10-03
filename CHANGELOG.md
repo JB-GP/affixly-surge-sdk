@@ -4,6 +4,18 @@ All notable changes to `affixly-surge-sdk` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/), and the project
 follows [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+- `from surge_sdk import anthropic` no longer fails on `anthropic` 1.x.
+  `HUMAN_PROMPT` / `AI_PROMPT` (legacy Text Completions constants, removed in
+  anthropic 1.x) are now re-exported only when the installed `anthropic`
+  provides them, so the wrapper imports on both 0.x and 1.x.
+- `track_quota_event()` now sends the event's top-level `product` as the
+  `product_line` argument when one is given, instead of always using the
+  `product_line` from `configure()`. Falls back to the configured value when
+  `product_line` is `None`.
+
 ## [0.7.0] — 2026-10-01
 
 ### Added

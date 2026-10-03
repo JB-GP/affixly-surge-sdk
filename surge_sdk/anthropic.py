@@ -16,8 +16,17 @@ from anthropic import Anthropic as _RealAnthropic, AsyncAnthropic as _RealAsyncA
 from anthropic import (
     APIError, AuthenticationError, BadRequestError, NotFoundError,
     RateLimitError, APIConnectionError, APITimeoutError,
-    HUMAN_PROMPT, AI_PROMPT,
 )
+
+# HUMAN_PROMPT / AI_PROMPT belonged to the legacy Text Completions API and were
+# removed in anthropic 1.x, where importing them raised ImportError and broke
+# `from surge_sdk import anthropic` entirely. Re-export them only when the
+# installed anthropic still provides them (0.x), so both majors import cleanly.
+try:
+    from anthropic import HUMAN_PROMPT, AI_PROMPT  # noqa: F401
+    _LEGACY_PROMPTS = ["HUMAN_PROMPT", "AI_PROMPT"]
+except ImportError:
+    _LEGACY_PROMPTS = []
 
 logger = logging.getLogger("surge_sdk")
 
@@ -25,8 +34,7 @@ __all__ = [
     "Anthropic", "AsyncAnthropic",
     "APIError", "AuthenticationError", "BadRequestError", "NotFoundError",
     "RateLimitError", "APIConnectionError", "APITimeoutError",
-    "HUMAN_PROMPT", "AI_PROMPT",
-]
+] + _LEGACY_PROMPTS
 
 
 def _build_surge_user_id(per_request_tags=None):

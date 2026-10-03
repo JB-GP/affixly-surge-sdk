@@ -358,6 +358,14 @@ def track(event, tenant, properties=None):
             properties={"repo": "owner/repo", "language": "python"},
         )
     """
+    _track(event, tenant, properties)
+
+
+def _track(event, tenant, properties=None, product=None):
+    """track() with an optional per-event `product` override.
+
+    `product` falls back to the configured `product_line` when not given.
+    """
     cfg = get_config()
     if not cfg.surge_api_url or not cfg.surge_api_key:
         logger.warning(
@@ -370,7 +378,7 @@ def track(event, tenant, properties=None):
     payload = {
         "event": _truncate(event),
         "tenant": _truncate(tenant),
-        "product": _truncate(cfg.product_line),
+        "product": _truncate(product or cfg.product_line),
         "properties": properties or {},
     }
 
@@ -430,4 +438,12 @@ def track_quota_event(kind, product_line, customer_id, plan=None, **fields):
     properties = {"product_line": product_line, "customer_id": customer_id, "plan": plan}
     properties.update(fields)
     properties = {k: v for k, v in properties.items() if v is not None}
-    track(event, tenant=str(customer_id or product_line or "unknown"), properties=properties)
+    # The event's top-level `product` is the product_line passed here, not
+    # only the globally configured one — a shared service reporting quota
+    # events for several products must attribute each to the right product.
+    _track(
+        event,
+        tenant=str(customer_id or product_line or "unknown"),
+        properties=properties,
+        product=product_line,
+    )
