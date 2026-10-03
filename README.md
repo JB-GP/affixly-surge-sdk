@@ -168,6 +168,10 @@ from surge_sdk import set_diagnostics
 set_diagnostics(on_report_error=lambda exc: metrics.increment("surge.report_dropped"))
 ```
 
+The handler receives a `SurgeReportError` with `endpoint`, `status` (HTTP
+status or `None`) and `reason`. It is sanitized: no SDK key, no headers, no
+event payload, and no traceback, so it is safe to forward to Sentry or a log.
+
 **Over-quota behavior.** When your Surge event quota is exhausted the backend
 answers event reports with `X-Surge-Quota: exceeded`. The SDK then emits a
 Python `warnings.warn` **once per process** and never raises; events are dropped

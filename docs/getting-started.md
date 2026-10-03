@@ -399,6 +399,8 @@ To observe dropped reports without changing that behavior, opt in with
 from surge_sdk import set_diagnostics
 
 # on_report_error(exc) is called best-effort whenever a report fails to send.
+# exc is a sanitized SurgeReportError (.endpoint, .status, .reason): no SDK key,
+# no headers, no payload, no traceback.
 set_diagnostics(on_report_error=lambda exc: metrics.increment("surge.report_dropped"))
 
 set_diagnostics()        # pass nothing (or None) to clear the handler
@@ -614,7 +616,7 @@ reported, with cost `0`.
 - **Provider SDKs** (install the extra you use): `anthropic>=0.25,<2`,
   `openai>=1,<3`, `google-genai>=1,<2`.
 - **SemVer:** the public API exported from `surge_sdk` (`configure`,
-  `get_config`, `track`, `track_quota_event`, `flush`, `set_diagnostics`)
+  `get_config`, `track`, `track_quota_event`, `flush`, `set_diagnostics`, `SurgeReportError`)
   follows semantic versioning — breaking changes bump the major version.
 - **Version source:** single-sourced in `pyproject.toml` and read back at
   runtime from installed package metadata as `surge_sdk.__version__`, so there

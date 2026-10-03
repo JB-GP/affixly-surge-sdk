@@ -33,6 +33,7 @@ atexit.register(_shutdown_pool)
 
 
 # C4 fix: disable HTTP redirects to prevent Bearer token leakage
+import urllib.error
 import urllib.request
 
 class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
@@ -72,12 +73,50 @@ _quota_warned = False
 _quota_warn_lock = threading.Lock()
 
 
+class SurgeReportError(Exception):
+    """A dropped Surge report, as handed to ``on_report_error``.
+
+    Sanitized on purpose: it carries only which endpoint failed (``endpoint``),
+    the HTTP status if there was one (``status``) and a short ``reason`` — never
+    the SDK key, request headers or the event payload. It is a fresh exception
+    with no traceback and no chained cause, because the frame that failed holds
+    the ``Authorization`` header and the payload in its locals, and error
+    reporters (Sentry and others) capture frame locals by default.
+    """
+
+    def __init__(self, endpoint, reason, status=None):
+        super().__init__(
+            f"Surge report to {endpoint} failed: {reason}"
+            + (f" (HTTP {status})" if status is not None else "")
+        )
+        self.endpoint = endpoint
+        self.reason = reason
+        self.status = status
+
+
+def _sanitize_report_error(exc, endpoint):
+    """Reduce a transport failure to a SurgeReportError with no secrets."""
+    status = None
+    if isinstance(exc, urllib.error.HTTPError):
+        status = exc.code
+        reason = "http_error"
+    elif isinstance(exc, urllib.error.URLError):
+        # exc.reason is an OSError/socket error/str; its class name is enough
+        # (ConnectionRefusedError, gaierror, timeout, SSLCertVerificationError…).
+        inner = exc.reason
+        reason = type(inner).__name__ if isinstance(inner, BaseException) else "url_error"
+    else:
+        reason = type(exc).__name__
+    return SurgeReportError(endpoint, reason, status)
+
+
 def set_diagnostics(on_report_error=None):
     """Opt in to reporting diagnostics without changing failure behavior.
 
     ``on_report_error(exc)`` is called best-effort whenever a usage/track report
-    fails to send. Surge still never raises into your code. Pass ``None`` to
-    clear the handler.
+    fails to send, with a :class:`SurgeReportError` (``endpoint``, ``status``,
+    ``reason``) — sanitized, never the key or the payload. Surge still never
+    raises into your code. Pass ``None`` to clear the handler.
     """
     global _on_report_error
     _on_report_error = on_report_error
@@ -323,7 +362,7 @@ def report_usage(
             # H8 fix: log instead of silently swallowing. Never raises into the
             # caller; opt-in diagnostics observe the drop (set_diagnostics()).
             logger.debug("Surge event report failed: %s", e)
-            _emit_report_error(e)
+            _emit_report_error(_sanitize_report_error(e, "/api/events"))
 
     try:
         fut = _pool.submit(_send)
@@ -405,7 +444,7 @@ def _track(event, tenant, properties=None, product=None):
             _check_quota_header(resp)
         except Exception as e:
             logger.warning("Surge track() failed for event %r: %s", event, e)
-            _emit_report_error(e)
+            _emit_report_error(_sanitize_report_error(e, "/api/track"))
         finally:
             with _inflight_lock:
                 _inflight_threads.discard(t)

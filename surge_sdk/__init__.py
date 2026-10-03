@@ -34,7 +34,9 @@ Usage:
 """
 
 from surge_sdk._config import configure, get_config
-from surge_sdk._reporter import track, track_quota_event, flush, set_diagnostics
+from surge_sdk._reporter import (
+    track, track_quota_event, flush, set_diagnostics, SurgeReportError,
+)
 
 # Single source of truth for the version is pyproject.toml; at runtime we read
 # it back from the installed package metadata (generated at build) so there is
@@ -53,5 +55,6 @@ __all__ = [
     "track_quota_event",
     "flush",
     "set_diagnostics",
+    "SurgeReportError",
     "__version__",
 ]
